@@ -105,7 +105,12 @@ static TTF_Font* open_font_px(int based_on_what, const char* path, Some_text tex
 
 int main(int argc, char **argv)
 {
-	TTF_Init(); is_TTF_Init = 1;
+	if(TTF_Init() !=0)
+	{
+		SDL_Log("SDL_Init failed: %s", SDL_GetError());
+		return cleanup(1);
+	}
+	is_TTF_Init = 1;
 	
 	SDL_Window *pclock_window = SDL_CreateWindow("Desktop Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 200, 100, 0);
 	
@@ -122,8 +127,8 @@ int main(int argc, char **argv)
 	
 	
 	//main clock
-	char *current_time = malloc(8 * sizeof(char));
-	sprintf(current_time, "%02d:%02d.%02d", t->tm_hour, t->tm_min, t->tm_sec);
+	char *current_time = malloc(9 * sizeof(char)); // 8 chars and 1 NULL terminator
+snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 	
 	SDL_Rect main_clock_rect = {5, 20, 80, 20};
 	Uint32 main_clock_rect_color = 0x502A36;
@@ -136,8 +141,8 @@ int main(int argc, char **argv)
 	
 	
 	//timer clock
-	char *timer_time = malloc(8 * sizeof(char));
-	sprintf(timer_time, "HELLO!");
+	char *timer_time = malloc(32);
+	snprintf(timer_time, sizeof(current_time), "0.000");
 	
 	SDL_Rect timer_clock_rect = {70, 60, 80, 20};
 	Uint32 timer_clock_rect_color = 0x282A52;
@@ -163,13 +168,18 @@ int main(int argc, char **argv)
 	}
 	
 	
+	Uint64 timer_start, timer_end;
+	double elapsed_time;
+	timer_start = SDL_GetTicks64();
+	
+	
 	int app_running = 1;
 	SDL_Event event;
 	while(app_running)
 	{
 		now = time(NULL);
 		t = localtime(&now);
-		sprintf(current_time, "%02d:%02d.%02d", t->tm_hour, t->tm_min, t->tm_sec);
+		snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 		main_clock.text = current_time;
 		
 		SDL_FillRect(pclock_surface, &app_surface_rect, app_surface_color);
@@ -203,10 +213,17 @@ int main(int argc, char **argv)
 		}
 		
 		SDL_Delay(100);
+		
+		timer_end = SDL_GetTicks64();
+		elapsed_time = ((timer_end - timer_start) / 1000.0);
+		snprintf(timer_clock.text, 32, "%04.03f", elapsed_time);
+		
 		SDL_UpdateWindowSurface(pclock_window);
 	}
 	
 	SDL_DestroyWindow(pclock_window);
+	free(current_time);
+	free(timer_time);
 	
 	return cleanup(0);
 }
