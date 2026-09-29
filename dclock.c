@@ -1,9 +1,13 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
+#include<math.h>
 #include<SDL2/SDL.h>
 #include<SDL2/SDL_ttf.h>
 #include<SDL2/SDL_timer.h>
+
+#define FONT_PT_MIN  1
+#define FONT_PT_MAX  512
 
 int is_TTF_Init = 0;
 int is_window_init = 0;
@@ -30,77 +34,53 @@ int cleanup(int return_value)
 	return(return_value);
 }
 
-static TTF_Font* open_font_px(int based_on_what, const char* path, Some_text text) // based_on_what = 1 is rect-height; based_on_what = 2 is some-width.
+static TTF_Font *open_font_fit(const Some_text *text)
 {
-	if(text.font_size >= 0) // makes this funcion work if and only if a negative number is given.
-	{
-		TTF_Font *f = TTF_OpenFont(text_font, text.font_size);
-		return f;
-	}
-	
-	if(based_on_what == 1)
-	{
-		int target_h = text.rect.h;
-		
-		int pt = target_h;
-		TTF_Font* f = TTF_OpenFont(path, pt);
-		if (!f) return NULL;
-	
-		for (int i = 0; i < 8; ++i) {
-			int h = TTF_FontHeight(f);
-			if (h == target_h) return f;
-			
-			int next_pt = (pt * target_h) / h;
-			if (next_pt < 1) next_pt = 1;
-			if (next_pt == pt) return f;
-			
-			pt = next_pt;
-			TTF_CloseFont(f);
-			f = TTF_OpenFont(path, pt);
-			if (!f) return NULL;
-		}
-		return f;
-	}
-	
-	else if (based_on_what == 2)
-	{
-		int target_w = text.rect.w;
-		const char* str = text.text;
-		
-		int pt = target_w;
-		TTF_Font* f = TTF_OpenFont(path, pt);
-		if (!f) return NULL;
-		
-		for (int i = 0; i < 8; ++i) {
-			int w = 0, h = 0;
-			if (TTF_SizeUTF8(f, str, &w, &h) != 0) {
-				TTF_CloseFont(f);
-				return NULL;
-			}
-			
-			if (w == target_w) return f;
-			if (w == 0) {
-				TTF_CloseFont(f);
-				return NULL;
-			}
-			
-			int next_pt = (pt * target_w) / w;
-			if (next_pt < 1) next_pt = 1;
-			if (next_pt == pt) return f;
-			
-			pt = next_pt;
-			TTF_CloseFont(f);
-			f = TTF_OpenFont(path, pt);
-			if (!f) return NULL;
-		}
-		return f;
-	}
+    if (!text || !text->font_path)
+        return NULL;
 
-	else // dumbass fallback to save ass, hell yeah!
-	{
-		TTF_Font* f = TTF_OpenFont(path, 13);
-		return f;
-	}
+    /* Explicit size requested: nothing to fit. */
+    if (text->font_size >= 0)
+        return TTF_OpenFont(text->font_path, text->font_size);
+
+    if (!text->text || text->text[0] == '\0')
+        return NULL;
+    if (text->rect.w <= 0 || text->rect.h <= 0)
+        return NULL;
+
+    int lo = FONT_PT_MIN;
+    int hi = FONT_PT_MAX;
+    int target_w = text->rect.w;
+    int target_h = text->rect.h;
+
+    TTF_Font *best = NULL;
+
+    while (lo <= hi) {
+        int pt = lo + (hi - lo) / 2;
+
+        TTF_Font *f = TTF_OpenFont(text->font_path, pt);
+        if (!f) {                       /* size unusable, try smaller */
+            hi = pt - 1;
+            continue;
+        }
+
+        int w = 0, h = 0;
+        if (TTF_SizeUTF8(f, text->text, &w, &h) != 0) {
+            TTF_CloseFont(f);
+            break;                      /* keep whatever best we had */
+        }
+
+        if (w <= target_w && h <= target_h) {
+            if (best) TTF_CloseFont(best);
+            best = f;                   /* fits: remember & try bigger */
+            lo   = pt + 1;
+        } else {
+            TTF_CloseFont(f);
+            hi = pt - 1;                /* too big: try smaller */
+        }
+    }
+
+    return best;
 }
 
 int main(int argc, char **argv)
@@ -112,7 +92,7 @@ int main(int argc, char **argv)
 	}
 	is_TTF_Init = 1;
 	
-	SDL_Window *pclock_window = SDL_CreateWindow("Desktop Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 200, 100, 0);
+	SDL_Window *pclock_window = SDL_CreateWindow("Desktop Window", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 200, 100, SDL_WINDOW_ALWAYS_ON_TOP /*| SDL_WINDOW_BORDERLESS*/);
 	
 	SDL_Surface *pclock_surface = SDL_GetWindowSurface(pclock_window);
 	SDL_Rect app_surface_rect = {0, 0, 200, 100};
@@ -130,7 +110,7 @@ int main(int argc, char **argv)
 	char *current_time = malloc(9 * sizeof(char)); // 8 chars and 1 NULL terminator
 snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 	
-	SDL_Rect main_clock_rect = {5, 20, 80, 20};
+	SDL_Rect main_clock_rect = {30, 20, 140, 40};
 	Uint32 main_clock_rect_color = 0x502A36;
 	char *main_clock_font = text_font;
 	SDL_Color main_clock_text_color = {248, 248, 242, 255};
@@ -142,9 +122,9 @@ snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 	
 	//timer clock
 	char *timer_time = malloc(32);
-	snprintf(timer_time, sizeof(current_time), "0.000");
+	snprintf(timer_time, 32, "00:00.00.000"); // this dumb init is for font size 
 	
-	SDL_Rect timer_clock_rect = {70, 60, 80, 20};
+	SDL_Rect timer_clock_rect = {5, 65, 195, 40};
 	Uint32 timer_clock_rect_color = 0x282A52;
 	char *timer_clock_font = text_font;
 	SDL_Color timer_clock_text_color = {248, 248, 242, 255};
@@ -152,15 +132,17 @@ snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 	
 	Some_text timer_clock = (Some_text){timer_time, timer_clock_text_color, timer_clock_font, timer_clock_text_size, timer_clock_rect, timer_clock_rect_color};
 	
+	int timer_hour, timer_minute, timer_second, timer_fraction;
 	
 	
-	TTF_Font *pmain_font = open_font_px(1, text_font, main_clock);
+	
+	TTF_Font *pmain_font = open_font_fit(&main_clock);
 	if(!pmain_font)
 	{
 		SDL_Log("Failed to load font: %s", TTF_GetError());
 		return cleanup(1);
 	}
-	TTF_Font *ptimer_font = open_font_px(1, text_font, timer_clock);
+	TTF_Font *ptimer_font = open_font_fit(&timer_clock);
 	if(!ptimer_font)
 	{
 		SDL_Log("Failed to load font: %s", TTF_GetError());
@@ -170,7 +152,7 @@ snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 	
 	Uint64 timer_start, timer_end;
 	double elapsed_time;
-	timer_start = SDL_GetTicks64();
+	timer_start = SDL_GetTicks64(); timer_end = SDL_GetTicks64();
 	
 	
 	int app_running = 1;
@@ -193,6 +175,7 @@ snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 			SDL_Log("Failed to render text: %s", TTF_GetError());
 			cleanup(1);
 		}
+		
 		SDL_Surface *ptimer_surface = TTF_RenderText_Solid(ptimer_font, timer_clock.text, timer_clock.text_color);
 		if(!ptimer_surface)
 		{
@@ -201,29 +184,41 @@ snprintf(current_time, 9, "%02d:%02d.%02d\0", t->tm_hour, t->tm_min, t->tm_sec);
 		}
 		
 		
-		SDL_BlitSurface(pmain_time_surface, NULL, pclock_surface, &main_clock.rect);
-		SDL_BlitSurface(ptimer_surface, NULL, pclock_surface, &timer_clock.rect);
-		SDL_FreeSurface(pmain_time_surface);
-		SDL_FreeSurface(ptimer_surface);
-		
 		while(SDL_PollEvent(&event) != 0)
 		{
 			if(event.type == SDL_QUIT)
 				app_running = 0;
 		}
+
+		
+		elapsed_time = ((timer_end - timer_start) / 1000.0);
+		Uint64 elapsed_ms = timer_end - timer_start;
+		
+		int total_seconds = (int) elapsed_time;
+		timer_hour = (total_seconds / 3600) % 24;
+		timer_minute = (total_seconds / 60) % 60;
+		timer_second = total_seconds % 60;
+		timer_fraction = elapsed_ms % 1000;
+		
+		snprintf(timer_clock.text, 32, "%d:%d.%d.%03d", timer_hour, timer_minute, timer_second, timer_fraction, (int)(timer_fraction * 1000));
+		
+		
+		SDL_BlitSurface(pmain_time_surface, NULL, pclock_surface, &main_clock.rect);
+		SDL_BlitSurface(ptimer_surface, NULL, pclock_surface, &timer_clock.rect);
+		SDL_FreeSurface(pmain_time_surface);
+		SDL_FreeSurface(ptimer_surface);
 		
 		SDL_Delay(100);
-		
 		timer_end = SDL_GetTicks64();
-		elapsed_time = ((timer_end - timer_start) / 1000.0);
-		snprintf(timer_clock.text, 32, "%04.03f", elapsed_time);
 		
 		SDL_UpdateWindowSurface(pclock_window);
 	}
 	
-	SDL_DestroyWindow(pclock_window);
+	TTF_CloseFont(pmain_font);
+	TTF_CloseFont(ptimer_font);
 	free(current_time);
 	free(timer_time);
+	SDL_DestroyWindow(pclock_window);
 	
 	return cleanup(0);
 }
